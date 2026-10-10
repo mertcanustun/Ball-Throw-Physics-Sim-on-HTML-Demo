@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Physics Misconception Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; }
+        #container { width: 100vw; height: 100vh; background: #87CEEB; }
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #4A90E2;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #4A90E2;
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+
+    <div id="container"></div>
+
+    <div class="absolute top-4 left-4 bg-white/30 backdrop-blur-md p-6 rounded-lg shadow-xl text-white min-w-[320px]">
+        <h1 class="text-2xl font-bold mb-4 text-black">Physics Simulator</h1>
+        
+        <div class="flex space-x-2 mb-4">
+            <button id="launch-button" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-all shadow-md">
+                Launch Ball
+            </button>
+            <button id="reset-button" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-all shadow-md">
+                Reset
+            </button>
+        </div>
+
+        <div class="mb-4 p-3 bg-black/20 rounded-lg">
+            <label class="flex items-center justify-between cursor-pointer">
+                <span class="text-lg font-semibold text-black">Correct Physics Mode</span>
+                <div class="relative">
+                    <input type="checkbox" id="physics-mode-toggle" class="sr-only toggle-checkbox" checked>
+                    <div class="block bg-gray-600 w-14 h-8 rounded-full toggle-label transition-all"></div>
+                    <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-all"></div>
+                </div>
+            </label>
+        </div>
+
+        <div class="space-y-3">
+            <h2 class="text-lg font-semibold text-black border-b border-black/20 pb-1">Toggle Forces</h2>
+            
+            <label class="flex items-center justify-between cursor-pointer">
+                <span class="text-black">1. Force of Gravity</span>
+                <div class="relative">
+                    <input type="checkbox" id="toggle-gravity" class="sr-only toggle-checkbox" checked>
+                    <div class="block bg-gray-600 w-14 h-8 rounded-full toggle-label transition-all"></div>
+                    <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-all"></div>
+                </div>
+            </label>
+
+            <label id="hit-force-label" class="flex items-center justify-between cursor-pointer transition-opacity">
+                <span class="text-black">2. "Force of the Hit"</span>
+                <div class="relative">
+                    <input type="checkbox" id="toggle-hit-force" class="sr-only toggle-checkbox" checked>
+                    <div class="block bg-gray-600 w-14 h-8 rounded-full toggle-label transition-all"></div>
+                    <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-all"></div>
+                </div>
+            </label>
+
+            <label class="flex items-center justify-between cursor-pointer">
+                <span class="text-black">3. Force of Air Resistance</span>
+                <div class="relative">
+                    <input type="checkbox" id="toggle-air-resistance" class="sr-only toggle-checkbox" checked>
+                    <div class="block bg-gray-600 w-14 h-8 rounded-full toggle-label transition-all"></div>
+                    <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-all"></div>
+                </div>
+            </label>
+        </div>
+
+        <p id="instructions" class="text-sm text-black/70 mt-4 pt-2 border-t border-black/20">
+            Click 'Launch'. In <span class="font-semibold">Correct Physics</span> mode, the "Force of Hit" is applied only once (instantaneously) and then disappears.
+        </p>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.164/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls, clock;
+        let ground, ballMesh, tee, trajectoryLine;
+        
+        let ballBody = {
+            position: new THREE.Vector3(0, 0.25, 0),
+            velocity: new THREE.Vector3(0, 0, 0),
+            mass: 0.045
+        };
+        
+        const teePosition = new THREE.Vector3(0, 0.25, 0);
+        let isInFlight = false;
+        let trajectoryPoints = [];
+        const MAX_TRAJECTORY_POINTS = 500;
+
+        let physicsMode = 'correct';
+        let useGravity = true;
+        let useHitForce = false;
+        let useAirResistance = true;
+
+        const launchButton = document.getElementById('launch-button');
+        const resetButton = document.getElementById('reset-button');
+        const physicsModeToggle = document.getElementById('physics-mode-toggle');
+        const gravityToggle = document.getElementById('toggle-gravity');
+        const hitForceToggle = document.getElementById('toggle-hit-force');
+        const hitForceLabel = document.getElementById('hit-force-label');
+        const airResistanceToggle = document.getElementById('toggle-air-resistance');
+        const instructions = document.getElementById('instructions');
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            clock = new THREE.Clock();
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 5, 15);
+
+            const container = document.getElementById('container');
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.target.set(15, 2, 0);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight.position.set(10, 20, 5);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x008800 });
+            const groundGeo = new THREE.PlaneGeometry(200, 100);
+            ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            const teeMat = new THREE.MeshStandardMaterial({ color: 0xffffaa });
+            const teeGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.25, 8);
+            tee = new THREE.Mesh(teeGeo, teeMat);
+            tee.position.set(teePosition.x, teePosition.y - 0.125, teePosition.z);
+            tee.castShadow = true;
+            scene.add(tee);
+
+            const ballMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const ballGeo = new THREE.SphereGeometry(0.2, 32, 32);
+            ballMesh = new THREE.Mesh(ballGeo, ballMat);
+            ballMesh.castShadow = true;
+            scene.add(ballMesh);
+
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
+            const lineGeo = new THREE.BufferGeometry();
+            lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_TRAJECTORY_POINTS * 3), 3));
+            trajectoryLine = new THREE.Line(lineGeo, lineMat);
+            scene.add(trajectoryLine);
+
+            resetBall();
+
+            launchButton.addEventListener('click', launchBall);
+            resetButton.addEventListener('click', resetBall);
+            physicsModeToggle.addEventListener('change', updatePhysicsMode);
+            gravityToggle.addEventListener('change', (e) => useGravity = e.target.checked);
+            hitForceToggle.addEventListener('change', (e) => useHitForce = e.target.checked);
+            airResistanceToggle.addEventListener('change', (e) => useAirResistance = e.target.checked);
+
+            window.addEventListener('resize', onWindowResize);
+
+            updatePhysicsMode();
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function launchBall() {
+            resetBallState();
+            isInFlight = true;
+
+            const initialSpeed = 25;
+            const angle = Math.PI / 4;
+            
+            if (physicsMode === 'correct') {
+                ballBody.velocity.set(
+                    initialSpeed * Math.cos(angle),
+                    initialSpeed * Math.sin(angle),
+                    0
+                );
+            } else {
+                // Misconception: start with same initial velocity
+                // The continuous "hit force" will be added during flight
+                ballBody.velocity.set(
+                    initialSpeed * Math.cos(angle),
+                    initialSpeed * Math.sin(angle),
+                    0
+                );
+            }
+        }
+
+        function resetBall() {
+            resetBallState();
+            ballMesh.position.copy(ballBody.position);
+        }
+        
+        function resetBallState() {
+            isInFlight = false;
+            ballBody.position.copy(teePosition);
+            ballBody.velocity.set(0, 0, 0);
+            
+            trajectoryPoints = [];
+            const positions = trajectoryLine.geometry.attributes.position.array;
+            positions.fill(0);
+            trajectoryLine.geometry.attributes.position.needsUpdate = true;
+            trajectoryLine.geometry.setDrawRange(0, 0);
+        }
+
+        function updatePhysicsMode() {
+            physicsMode = physicsModeToggle.checked ? 'correct' : 'misconception';
+
+            if (physicsMode === 'correct') {
+                hitForceLabel.style.opacity = '0.5';
+                hitForceLabel.style.pointerEvents = 'none';
+                hitForceToggle.checked = false;
+                useHitForce = false;
+                instructions.innerHTML = `
+                    <span class="font-semibold">Correct Physics Mode:</span> "Force of Hit" is applied only once (instantaneously) and then disappears. This option is disabled.
+                `;
+            } else {
+                hitForceLabel.style.opacity = '1.0';
+                hitForceLabel.style.pointerEvents = 'auto';
+                hitForceToggle.checked = true;
+                useHitForce = true;
+                instructions.innerHTML = `
+                    <span class="font-semibold">Misconception Mode:</span> "Force of Hit" is simulated as a continuous force pushing the ball forward while airborne. Turn it off to see the ball drop.
+                `;
+            }
+            resetBall();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (isInFlight) {
+                const forces = new THREE.Vector3(0, 0, 0);
+
+                if (useGravity) {
+                    forces.y -= ballBody.mass * 9.81;
+                }
+
+                if (physicsMode === 'misconception' && useHitForce) {
+                    forces.x += 1.0;
+                }
+
+                if (useAirResistance) {
+                    const airDensity = 0.3;
+                    const dragCoefficient = 0.47;
+                    const radius = 0.2;
+                    const crossSectionalArea = Math.PI * radius * radius;
+                    
+                    const speed = ballBody.velocity.length();
+                    if (speed > 0.01) {
+                        const dragMagnitude = 0.2 * 0.5 * airDensity * speed * speed * dragCoefficient * crossSectionalArea;
+                        const dragForce = ballBody.velocity.clone().normalize().multiplyScalar(-dragMagnitude);
+                        forces.add(dragForce);
+                    }
+                }
+
+                const acceleration = forces.clone().divideScalar(ballBody.mass);
+                ballBody.velocity.add(acceleration.clone().multiplyScalar(delta));
+                ballBody.position.add(ballBody.velocity.clone().multiplyScalar(delta));
+
+                if (trajectoryPoints.length < MAX_TRAJECTORY_POINTS) {
+                    trajectoryPoints.push(ballBody.position.x, ballBody.position.y, ballBody.position.z);
+                    const positions = trajectoryLine.geometry.attributes.position.array;
+                    positions.set(trajectoryPoints, 0);
+                    trajectoryLine.geometry.attributes.position.needsUpdate = true;
+                    trajectoryLine.geometry.setDrawRange(0, trajectoryPoints.length / 3);
+                }
+
+                ballMesh.position.copy(ballBody.position);
+
+                const groundLevel = 0.2;
+                if (ballBody.position.y <= groundLevel) {
+                    if (ballBody.velocity.y < 0) {
+                        isInFlight = false;
+                        ballBody.position.y = groundLevel;
+                        ballBody.velocity.set(0, 0, 0);
+                    }
+                }
+            }
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        init();
+
+        document.querySelectorAll('.toggle-checkbox').forEach(toggle => {
+            toggle.addEventListener('change', (e) => {
+                const dot = e.target.nextElementSibling.nextElementSibling;
+                if (e.target.checked) {
+                    dot.style.transform = 'translateX(24px)';
+                } else {
+                    dot.style.transform = 'translateX(0px)';
+                }
+            });
+            const dot = toggle.nextElementSibling.nextElementSibling;
+            if (toggle.checked) {
+                dot.style.transform = 'translateX(24px)';
+            } else {
+                dot.style.transform = 'translateX(0px)';
+            }
+        });
+
+    </script>
+</body>
+</html>
